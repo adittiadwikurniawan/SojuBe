@@ -9,6 +9,15 @@ const router = Router();
 
 router.use(authenticate);
 
+async function barisUntukAudit(tabelBebasId: number, data: Record<string, unknown>) {
+  const kolom = await prisma.kolomTabelBebas.findMany({
+    where: { tabelBebasId },
+    select: { id: true, namaKolom: true },
+  });
+  const namaKolom = new Map(kolom.map((item) => [String(item.id), item.namaKolom]));
+  return Object.fromEntries(Object.entries(data).map(([id, value]) => [namaKolom.get(id) || `Kolom ${id}`, value]));
+}
+
 // GET /free-tables
 router.get('/', async (req: AuthRequest, res: Response, next) => {
   try {
@@ -209,8 +218,9 @@ router.post('/:id/rows', async (req: AuthRequest, res: Response, next) => {
     if (!data || typeof data !== 'object') throw errorResponse('data (object) wajib diisi');
 
     const row = await prisma.barisTabelBebas.create({ data: { tabelBebasId, data } });
+    const auditData = await barisUntukAudit(tabelBebasId, data);
 
-    await logManualAction(req.user!.id, 'baris_tabel_bebas', AksiLog.TAMBAH, table.namaTabel, `Baris baru di "${table.namaTabel}"`, row.id);
+    await logManualAction(req.user!.id, 'baris_tabel_bebas', AksiLog.TAMBAH, table.namaTabel, `Baris baru di "${table.namaTabel}"`, row.id, undefined, auditData);
 
     res.json(successResponse(row));
   } catch (error) {
@@ -222,13 +232,19 @@ router.post('/:id/rows', async (req: AuthRequest, res: Response, next) => {
 router.put('/:id/rows/:rowId', async (req: AuthRequest, res: Response, next) => {
   try {
     const rowId = parseInt(String(req.params.rowId));
+    const tabelBebasId = parseInt(String(req.params.id));
+    const table = await prisma.tabelBebas.findUnique({ where: { id: tabelBebasId } });
+    if (!table) throw errorResponse('Tabel tidak ditemukan', 404);
     const before = await prisma.barisTabelBebas.findUnique({ where: { id: rowId } });
-    if (!before) throw errorResponse('Baris tidak ditemukan', 404);
+    if (!before || before.tabelBebasId !== tabelBebasId) throw errorResponse('Baris tidak ditemukan', 404);
 
     const { data } = req.body;
     if (!data || typeof data !== 'object') throw errorResponse('data (object) wajib diisi');
 
     const updated = await prisma.barisTabelBebas.update({ where: { id: rowId }, data: { data } });
+    const dataSebelum = await barisUntukAudit(tabelBebasId, before.data as Record<string, unknown>);
+    const dataSesudah = await barisUntukAudit(tabelBebasId, data as Record<string, unknown>);
+    await logManualAction(req.user!.id, 'baris_tabel_bebas', AksiLog.UBAH, table.namaTabel, `Baris di "${table.namaTabel}" diubah`, rowId, dataSebelum, dataSesudah);
     res.json(successResponse(updated));
   } catch (error) {
     next(error);
@@ -239,10 +255,15 @@ router.put('/:id/rows/:rowId', async (req: AuthRequest, res: Response, next) => 
 router.delete('/:id/rows/:rowId', async (req: AuthRequest, res: Response, next) => {
   try {
     const rowId = parseInt(String(req.params.rowId));
+    const tabelBebasId = parseInt(String(req.params.id));
+    const table = await prisma.tabelBebas.findUnique({ where: { id: tabelBebasId } });
+    if (!table) throw errorResponse('Tabel tidak ditemukan', 404);
     const row = await prisma.barisTabelBebas.findUnique({ where: { id: rowId } });
-    if (!row) throw errorResponse('Baris tidak ditemukan', 404);
+    if (!row || row.tabelBebasId !== tabelBebasId) throw errorResponse('Baris tidak ditemukan', 404);
 
     await prisma.barisTabelBebas.delete({ where: { id: rowId } });
+    const auditData = await barisUntukAudit(tabelBebasId, row.data as Record<string, unknown>);
+    await logManualAction(req.user!.id, 'baris_tabel_bebas', AksiLog.HAPUS, table.namaTabel, `Baris di "${table.namaTabel}" dihapus`, rowId, auditData);
     res.json(successResponse({ message: 'Baris dihapus' }));
   } catch (error) {
     next(error);

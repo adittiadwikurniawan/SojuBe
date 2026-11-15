@@ -11,6 +11,14 @@ const auditLogService_1 = require("../services/auditLogService");
 const client_1 = require("@prisma/client");
 const router = (0, express_1.Router)();
 router.use(auth_1.authenticate);
+async function barisUntukAudit(tabelBebasId, data) {
+    const kolom = await database_1.default.kolomTabelBebas.findMany({
+        where: { tabelBebasId },
+        select: { id: true, namaKolom: true },
+    });
+    const namaKolom = new Map(kolom.map((item) => [String(item.id), item.namaKolom]));
+    return Object.fromEntries(Object.entries(data).map(([id, value]) => [namaKolom.get(id) || `Kolom ${id}`, value]));
+}
 // GET /free-tables
 router.get('/', async (req, res, next) => {
     try {
@@ -209,7 +217,8 @@ router.post('/:id/rows', async (req, res, next) => {
         if (!data || typeof data !== 'object')
             throw (0, response_1.errorResponse)('data (object) wajib diisi');
         const row = await database_1.default.barisTabelBebas.create({ data: { tabelBebasId, data } });
-        await (0, auditLogService_1.logManualAction)(req.user.id, 'baris_tabel_bebas', client_1.AksiLog.TAMBAH, table.namaTabel, `Baris baru di "${table.namaTabel}"`, row.id);
+        const auditData = await barisUntukAudit(tabelBebasId, data);
+        await (0, auditLogService_1.logManualAction)(req.user.id, 'baris_tabel_bebas', client_1.AksiLog.TAMBAH, table.namaTabel, `Baris baru di "${table.namaTabel}"`, row.id, undefined, auditData);
         res.json((0, response_1.successResponse)(row));
     }
     catch (error) {
@@ -220,13 +229,20 @@ router.post('/:id/rows', async (req, res, next) => {
 router.put('/:id/rows/:rowId', async (req, res, next) => {
     try {
         const rowId = parseInt(String(req.params.rowId));
+        const tabelBebasId = parseInt(String(req.params.id));
+        const table = await database_1.default.tabelBebas.findUnique({ where: { id: tabelBebasId } });
+        if (!table)
+            throw (0, response_1.errorResponse)('Tabel tidak ditemukan', 404);
         const before = await database_1.default.barisTabelBebas.findUnique({ where: { id: rowId } });
-        if (!before)
+        if (!before || before.tabelBebasId !== tabelBebasId)
             throw (0, response_1.errorResponse)('Baris tidak ditemukan', 404);
         const { data } = req.body;
         if (!data || typeof data !== 'object')
             throw (0, response_1.errorResponse)('data (object) wajib diisi');
         const updated = await database_1.default.barisTabelBebas.update({ where: { id: rowId }, data: { data } });
+        const dataSebelum = await barisUntukAudit(tabelBebasId, before.data);
+        const dataSesudah = await barisUntukAudit(tabelBebasId, data);
+        await (0, auditLogService_1.logManualAction)(req.user.id, 'baris_tabel_bebas', client_1.AksiLog.UBAH, table.namaTabel, `Baris di "${table.namaTabel}" diubah`, rowId, dataSebelum, dataSesudah);
         res.json((0, response_1.successResponse)(updated));
     }
     catch (error) {
@@ -237,10 +253,16 @@ router.put('/:id/rows/:rowId', async (req, res, next) => {
 router.delete('/:id/rows/:rowId', async (req, res, next) => {
     try {
         const rowId = parseInt(String(req.params.rowId));
+        const tabelBebasId = parseInt(String(req.params.id));
+        const table = await database_1.default.tabelBebas.findUnique({ where: { id: tabelBebasId } });
+        if (!table)
+            throw (0, response_1.errorResponse)('Tabel tidak ditemukan', 404);
         const row = await database_1.default.barisTabelBebas.findUnique({ where: { id: rowId } });
-        if (!row)
+        if (!row || row.tabelBebasId !== tabelBebasId)
             throw (0, response_1.errorResponse)('Baris tidak ditemukan', 404);
         await database_1.default.barisTabelBebas.delete({ where: { id: rowId } });
+        const auditData = await barisUntukAudit(tabelBebasId, row.data);
+        await (0, auditLogService_1.logManualAction)(req.user.id, 'baris_tabel_bebas', client_1.AksiLog.HAPUS, table.namaTabel, `Baris di "${table.namaTabel}" dihapus`, rowId, auditData);
         res.json((0, response_1.successResponse)({ message: 'Baris dihapus' }));
     }
     catch (error) {
