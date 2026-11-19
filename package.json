@@ -10,7 +10,7 @@
     "prisma:studio": "prisma studio",
     "prisma:seed": "tsx prisma/seed.ts",
     "prisma:seed-cms": "tsx prisma/seed-cms.ts",
-    "import:excel": "tsx prisma/import-excel.ts"
+    "prisma:set-super-admin": "tsx prisma/set-super-admin.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.20.0",

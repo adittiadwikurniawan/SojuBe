@@ -13,6 +13,9 @@ import auditLogRoutes from './routes/auditLog';
 import freeTableRoutes from './routes/freeTables';
 import cmsRoutes from './routes/cms';
 import cmsPublicRoutes from './routes/cmsPublic';
+import customerRoutes from './routes/customer';
+import usersRoutes from './routes/users';
+import customerOrdersAdminRoutes from './routes/customerOrdersAdmin';
 
 dotenv.config();
 
@@ -38,6 +41,11 @@ app.use('/api/v1/reports', reportRoutes);
 app.use('/api/v1/audit-log', auditLogRoutes);
 app.use('/api/v1/free-tables', freeTableRoutes);
 app.use('/api/v1/cms', cmsRoutes);
+app.use('/api/v1/users', usersRoutes);
+app.use('/api/v1/customer-orders', customerOrdersAdminRoutes);
+
+// Akun, keranjang, dan pesanan customer terpisah dari API admin.
+app.use('/api/customer', customerRoutes);
 
 // Public endpoints (untuk customer page tanpa auth)
 app.use('/api/public/cms', cmsPublicRoutes);

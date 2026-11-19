@@ -37,11 +37,24 @@ enum AksiLog {
   HAPUS
 }
 
+enum PeranPengguna {
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum StatusPesananPelanggan {
+  MENUNGGU_KONFIRMASI
+  DIPROSES
+  SELESAI
+  DIBATALKAN
+}
+
 model Pengguna {
   id           Int      @id @default(autoincrement())
   nama         String   @db.VarChar(100)
   email        String   @unique @db.VarChar(150)
   passwordHash String   @map("password_hash") @db.VarChar(255)
+  peran        PeranPengguna @default(ADMIN)
   dibuatPada   DateTime @default(now()) @map("dibuat_pada") @db.DateTime(0)
 
   transaksi       Transaksi[]
@@ -108,7 +121,70 @@ model Produk {
   aktif         Boolean  @default(true)
   dibuatPada    DateTime @default(now()) @map("dibuat_pada") @db.DateTime(0)
 
+  itemPesananPelanggan ItemPesananPelanggan[]
+
   @@map("produk")
+}
+
+/// Akun customer storefront, dipisahkan dari pengguna admin.
+model Pelanggan {
+  id           Int      @id @default(autoincrement())
+  nama         String   @db.VarChar(100)
+  email        String   @unique @db.VarChar(150)
+  noTelepon    String   @map("no_telepon") @db.VarChar(30)
+  alamat       String   @db.Text
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  keranjang    Json?
+  aktif        Boolean  @default(true)
+  dibuatPada   DateTime @default(now()) @map("dibuat_pada") @db.DateTime(0)
+  diubahPada   DateTime @updatedAt @map("diubah_pada") @db.DateTime(0)
+
+  pesanan PesananPelanggan[]
+
+  @@map("pelanggan")
+}
+
+/// Pesanan storefront tanpa pembayaran online pada tahap awal.
+model PesananPelanggan {
+  id              Int                    @id @default(autoincrement())
+  kode            String                 @unique @db.VarChar(30)
+  pelangganId     Int                    @map("pelanggan_id")
+  namaPenerima    String                 @map("nama_penerima") @db.VarChar(100)
+  emailPenerima   String                 @map("email_penerima") @db.VarChar(150)
+  noTelepon       String                 @map("no_telepon") @db.VarChar(30)
+  alamat          String                 @db.Text
+  total           Decimal                @db.Decimal(15, 2)
+  status          StatusPesananPelanggan @default(MENUNGGU_KONFIRMASI)
+  dibuatPada      DateTime               @default(now()) @map("dibuat_pada") @db.DateTime(0)
+  diubahPada      DateTime               @updatedAt @map("diubah_pada") @db.DateTime(0)
+
+  pelanggan Pelanggan             @relation(fields: [pelangganId], references: [id], onDelete: Restrict)
+  item      ItemPesananPelanggan[]
+
+  @@index([pelangganId, dibuatPada])
+  @@index([status, dibuatPada])
+  @@map("pesanan_pelanggan")
+}
+
+/// Snapshot item pesanan agar riwayat harga/nama tetap utuh.
+model ItemPesananPelanggan {
+  id          Int      @id @default(autoincrement())
+  pesananId   Int      @map("pesanan_id")
+  produkId    Int?     @map("produk_id")
+  namaProduk  String   @map("nama_produk") @db.VarChar(100)
+  varian      String?  @db.VarChar(100)
+  satuan      String?  @db.VarChar(20)
+  harga       Decimal  @db.Decimal(15, 2)
+  jumlah      Int
+  catatan     String?  @db.VarChar(255)
+  subtotal    Decimal  @db.Decimal(15, 2)
+
+  pesanan PesananPelanggan @relation(fields: [pesananId], references: [id], onDelete: Cascade)
+  produk  Produk?          @relation(fields: [produkId], references: [id], onDelete: SetNull)
+
+  @@index([pesananId])
+  @@index([produkId])
+  @@map("item_pesanan_pelanggan")
 }
 
 /// Entri Transaksi — TABEL INTI. Satu baris = satu entri di bawah satu

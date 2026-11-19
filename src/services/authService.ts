@@ -29,7 +29,7 @@ export const login = async (params: LoginParams) => {
   }
 
   const token = jwt.sign(
-    { id: user.id, email: user.email },
+    { id: user.id, email: user.email, type: 'admin' },
     JWT_SECRET,
     { expiresIn: '7d' }
   );
@@ -40,6 +40,7 @@ export const login = async (params: LoginParams) => {
       id: user.id,
       nama: user.nama,
       email: user.email,
+      peran: user.peran,
     }
   };
 };

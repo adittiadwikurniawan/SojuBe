@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { authenticate, AuthRequest } from '../middleware/auth';
+import { authenticate, authorizeRoles, AuthRequest } from '../middleware/auth';
 import { successResponse, errorResponse } from '../utils/response';
 import prisma from '../utils/database';
 import { logManualAction } from '../services/auditLogService';
@@ -22,7 +22,7 @@ const withoutImageData = <T extends { gambarData?: Uint8Array | null; gambarMime
 };
 
 // All routes require authentication
-router.use(authenticate);
+router.use(authenticate, authorizeRoles('SUPER_ADMIN'));
 
 // GET /products
 router.get('/', async (req: AuthRequest, res: Response, next) => {

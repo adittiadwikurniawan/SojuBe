@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { authenticate, AuthRequest } from '../middleware/auth';
+import { authenticate, authorizeRoles, AuthRequest } from '../middleware/auth';
 import { successResponse, errorResponse } from '../utils/response';
 import prisma from '../utils/database';
 import { logManualAction } from '../services/auditLogService';
@@ -7,7 +7,7 @@ import { AksiLog, ArahTransaksi, TipeDataKolom } from '@prisma/client';
 
 const router = Router();
 
-router.use(authenticate);
+router.use(authenticate, authorizeRoles('ADMIN', 'SUPER_ADMIN'));
 
 // ================= JENIS TRANSAKSI (Master Transaksi) =================
 // Ini daftar "tab" (Biaya Tak Langsung, Frozen Food, dst) - dipakai

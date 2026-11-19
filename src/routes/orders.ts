@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { authenticate, AuthRequest } from '../middleware/auth';
+import { authenticate, authorizeRoles, AuthRequest } from '../middleware/auth';
 import { successResponse, errorResponse } from '../utils/response';
 import prisma from '../utils/database';
 import { logManualAction } from '../services/auditLogService';
@@ -8,7 +8,7 @@ import { KODE_JENIS_BAWAAN } from '../utils/jenisBawaan';
 
 const router = Router();
 
-router.use(authenticate);
+router.use(authenticate, authorizeRoles('SUPER_ADMIN'));
 
 // Order dikenali lewat jenis bawaan "Pendapatan Frozen"/"Pendapatan Siap Saji"
 const ORDER_JENIS_KODE = [KODE_JENIS_BAWAAN.PENDAPATAN_FROZEN, KODE_JENIS_BAWAAN.PENDAPATAN_SIAP_SAJI];

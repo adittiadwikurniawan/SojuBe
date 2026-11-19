@@ -1,12 +1,12 @@
 import { Router, Request, Response } from 'express';
-import { authenticate, AuthRequest } from '../middleware/auth';
+import { authenticate, authorizeRoles, AuthRequest } from '../middleware/auth';
 import { successResponse } from '../utils/response';
 import prisma from '../utils/database';
 import { SumberInput } from '@prisma/client';
 
 const router = Router();
 
-router.use(authenticate);
+router.use(authenticate, authorizeRoles('ADMIN', 'SUPER_ADMIN'));
 
 // GET /audit-log
 router.get('/', async (req: AuthRequest, res: Response, next) => {

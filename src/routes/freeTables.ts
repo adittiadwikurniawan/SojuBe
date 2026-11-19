@@ -1,5 +1,5 @@
 import { Router, Response } from 'express';
-import { authenticate, AuthRequest } from '../middleware/auth';
+import { authenticate, authorizeRoles, AuthRequest } from '../middleware/auth';
 import { successResponse, errorResponse } from '../utils/response';
 import prisma from '../utils/database';
 import { logManualAction } from '../services/auditLogService';
@@ -7,7 +7,7 @@ import { AksiLog, TipeDataKolom } from '@prisma/client';
 
 const router = Router();
 
-router.use(authenticate);
+router.use(authenticate, authorizeRoles('ADMIN', 'SUPER_ADMIN'));
 
 async function barisUntukAudit(tabelBebasId: number, data: Record<string, unknown>) {
   const kolom = await prisma.kolomTabelBebas.findMany({

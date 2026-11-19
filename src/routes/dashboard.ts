@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { authenticate, AuthRequest } from '../middleware/auth';
+import { authenticate, authorizeRoles, AuthRequest } from '../middleware/auth';
 import { successResponse } from '../utils/response';
 import prisma from '../utils/database';
 import { KODE_JENIS_BAWAAN } from '../utils/jenisBawaan';
@@ -14,7 +14,7 @@ async function orderJenisIds(): Promise<number[]> {
   return list.map((j) => j.id);
 }
 
-router.use(authenticate);
+router.use(authenticate, authorizeRoles('ADMIN', 'SUPER_ADMIN'));
 
 // GET /dashboard/summary
 router.get('/summary', async (req: AuthRequest, res: Response, next) => {
