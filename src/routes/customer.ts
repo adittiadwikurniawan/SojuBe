@@ -8,13 +8,17 @@ import { CustomerRequest, authenticateCustomer } from '../middleware/customerAut
 import { errorResponse, successResponse } from '../utils/response';
 
 const router = Router();
-const publicCustomer = (customer: { id: number; nama: string; email: string; noTelepon: string; alamat: string; dibuatPada: Date }) => ({
+const publicCustomer = (customer: { id: number; nama: string; email: string; noTelepon: string; alamat: string; dibuatPada: Date; terakhirMasukPada: Date | null; promosiDiizinkan: boolean; promosiDisetujuiPada: Date | null; promosiBerhentiPada: Date | null }) => ({
   id: customer.id,
   nama: customer.nama,
   email: customer.email,
   noTelepon: customer.noTelepon,
   alamat: customer.alamat,
   dibuatPada: customer.dibuatPada,
+  terakhirMasukPada: customer.terakhirMasukPada,
+  promosiDiizinkan: customer.promosiDiizinkan,
+  promosiDisetujuiPada: customer.promosiDisetujuiPada,
+  promosiBerhentiPada: customer.promosiBerhentiPada,
 });
 
 function customerToken(id: number, email: string) {
@@ -73,6 +77,7 @@ router.post('/auth/daftar', async (req, res, next) => {
     const noTelepon = typeof req.body?.noTelepon === 'string' ? req.body.noTelepon.trim() : '';
     const alamat = typeof req.body?.alamat === 'string' ? req.body.alamat.trim() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const promosiDiizinkan = req.body?.promosiDiizinkan === true;
     if (!nama || !email || !noTelepon || !alamat || password.length < 8) {
       throw errorResponse('Nama, email, nomor telepon, alamat, dan password minimal 8 karakter wajib diisi');
     }
@@ -80,7 +85,11 @@ router.post('/auth/daftar', async (req, res, next) => {
     const existing = await prisma.pelanggan.findUnique({ where: { email }, select: { id: true } });
     if (existing) throw errorResponse('Email sudah terdaftar', 409);
     const customer = await prisma.pelanggan.create({
-      data: { nama, email, noTelepon, alamat, passwordHash: await bcrypt.hash(password, 10), keranjang: [] },
+      data: {
+        nama, email, noTelepon, alamat, passwordHash: await bcrypt.hash(password, 10), keranjang: [],
+        promosiDiizinkan,
+        ...(promosiDiizinkan ? { promosiDisetujuiPada: new Date() } : {}),
+      },
     });
     res.status(201).json(successResponse({ token: customerToken(customer.id, customer.email), customer: publicCustomer(customer) }));
   } catch (error) {
@@ -95,7 +104,8 @@ router.post('/auth/masuk', async (req, res, next) => {
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
     const customer = await prisma.pelanggan.findUnique({ where: { email } });
     if (!customer?.aktif || !(await bcrypt.compare(password, customer.passwordHash))) throw errorResponse('Email atau password salah', 401);
-    res.json(successResponse({ token: customerToken(customer.id, customer.email), customer: publicCustomer(customer) }));
+    const updated = await prisma.pelanggan.update({ where: { id: customer.id }, data: { terakhirMasukPada: new Date() } });
+    res.json(successResponse({ token: customerToken(updated.id, updated.email), customer: publicCustomer(updated) }));
   } catch (error) {
     next(error);
   }
@@ -126,7 +136,18 @@ router.patch('/profil', async (req: CustomerRequest, res: Response, next) => {
       const duplicate = await prisma.pelanggan.findFirst({ where: { email: data.email, id: { not: req.customer!.id } } });
       if (duplicate) throw errorResponse('Email sudah digunakan akun lain', 409);
     }
-    const customer = await prisma.pelanggan.update({ where: { id: req.customer!.id }, data });
+    const updateData: Prisma.PelangganUpdateInput = { ...data };
+    if (req.body?.promosiDiizinkan !== undefined) {
+      if (typeof req.body.promosiDiizinkan !== 'boolean') throw errorResponse('Pilihan promosi tidak valid');
+      updateData.promosiDiizinkan = req.body.promosiDiizinkan;
+      if (req.body.promosiDiizinkan) {
+        updateData.promosiDisetujuiPada = new Date();
+        updateData.promosiBerhentiPada = null;
+      } else {
+        updateData.promosiBerhentiPada = new Date();
+      }
+    }
+    const customer = await prisma.pelanggan.update({ where: { id: req.customer!.id }, data: updateData });
     res.json(successResponse(publicCustomer(customer)));
   } catch (error) { next(error); }
 });

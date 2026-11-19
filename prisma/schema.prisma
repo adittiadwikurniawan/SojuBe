@@ -49,6 +49,16 @@ enum StatusPesananPelanggan {
   DIBATALKAN
 }
 
+enum SegmenKampanyePelanggan {
+  SEMUA_BERIZIN
+  BELUM_PERNAH_MEMESAN
+  TIDAK_MEMESAN_LAGI
+}
+
+enum StatusKampanyePelanggan {
+  DRAF
+}
+
 model Pengguna {
   id           Int      @id @default(autoincrement())
   nama         String   @db.VarChar(100)
@@ -63,6 +73,7 @@ model Pengguna {
   kolomCustom     KolomCustom[]
   tabelBebas      TabelBebas[]
   cmsContent      CmsContent[]
+  kampanyePelanggan KampanyePelanggan[]
 
   @@map("pengguna")
 }
@@ -115,6 +126,7 @@ model Produk {
   satuan        String   @default("pcs") @db.VarChar(20)
   hargaDefault  Decimal  @default(0) @map("harga_default") @db.Decimal(15, 2)
   gambar        String?  @db.Text
+  gambarNama    String?  @map("gambar_nama") @db.VarChar(255)
   gambarData    Bytes?   @map("gambar_data") @db.LongBlob
   gambarMime    String?  @map("gambar_mime") @db.VarChar(100)
   deskripsi      String?  @db.Text
@@ -138,10 +150,35 @@ model Pelanggan {
   aktif        Boolean  @default(true)
   dibuatPada   DateTime @default(now()) @map("dibuat_pada") @db.DateTime(0)
   diubahPada   DateTime @updatedAt @map("diubah_pada") @db.DateTime(0)
+  terakhirMasukPada DateTime? @map("terakhir_masuk_pada") @db.DateTime(0)
+  promosiDiizinkan Boolean @default(false) @map("promosi_diizinkan")
+  promosiDisetujuiPada DateTime? @map("promosi_disetujui_pada") @db.DateTime(0)
+  promosiBerhentiPada DateTime? @map("promosi_berhenti_pada") @db.DateTime(0)
 
   pesanan PesananPelanggan[]
 
   @@map("pelanggan")
+  @@index([aktif, terakhirMasukPada])
+  @@index([promosiDiizinkan])
+}
+
+/// Draft kampanye CRM; pengiriman baru diaktifkan setelah provider email dipilih.
+model KampanyePelanggan {
+  id                  Int                       @id @default(autoincrement())
+  judul               String                    @db.VarChar(150)
+  subjek              String                    @db.VarChar(200)
+  isi                 String                    @db.Text
+  segmen              SegmenKampanyePelanggan
+  hariTidakMemesan    Int?                      @map("hari_tidak_memesan")
+  status              StatusKampanyePelanggan   @default(DRAF)
+  dibuatOleh          Int                       @map("dibuat_oleh")
+  dibuatPada          DateTime                  @default(now()) @map("dibuat_pada") @db.DateTime(0)
+  diubahPada          DateTime                  @updatedAt @map("diubah_pada") @db.DateTime(0)
+
+  pengguna            Pengguna                  @relation(fields: [dibuatOleh], references: [id])
+
+  @@map("kampanye_pelanggan")
+  @@index([dibuatPada])
 }
 
 /// Pesanan storefront tanpa pembayaran online pada tahap awal.

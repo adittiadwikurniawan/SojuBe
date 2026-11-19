@@ -16,6 +16,12 @@ const imageDataFrom = (value: unknown): { data: Buffer; mime: string } | null =>
   return { data, mime: match[1] };
 };
 
+const cleanImageName = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const name = value.trim().replace(/[\\/]/g, '').slice(0, 255);
+  return name || null;
+};
+
 const withoutImageData = <T extends { gambarData?: Uint8Array | null; gambarMime?: string | null }>(product: T) => {
   const { gambarData: _data, gambarMime: _mime, ...safeProduct } = product;
   return safeProduct;
@@ -46,7 +52,7 @@ router.get('/', async (req: AuthRequest, res: Response, next) => {
     const products = await prisma.produk.findMany({
       where,
       orderBy: { dibuatPada: 'desc' },
-      select: { id: true, kode: true, namaBarang: true, varian: true, satuan: true, hargaDefault: true, gambar: true, deskripsi: true, aktif: true, dibuatPada: true }
+      select: { id: true, kode: true, namaBarang: true, varian: true, satuan: true, hargaDefault: true, gambar: true, gambarNama: true, deskripsi: true, aktif: true, dibuatPada: true }
     });
 
     res.json(successResponse(products));
@@ -60,7 +66,7 @@ router.get('/:id', async (req: AuthRequest, res: Response, next) => {
   try {
     const product = await prisma.produk.findUnique({
       where: { id: parseInt(String(req.params.id)) },
-      select: { id: true, kode: true, namaBarang: true, varian: true, satuan: true, hargaDefault: true, gambar: true, deskripsi: true, aktif: true, dibuatPada: true }
+      select: { id: true, kode: true, namaBarang: true, varian: true, satuan: true, hargaDefault: true, gambar: true, gambarNama: true, deskripsi: true, aktif: true, dibuatPada: true }
     });
 
     if (!product) {
@@ -81,7 +87,7 @@ router.get('/:id/image', async (req: Request, res: Response, next) => {
       select: { gambarData: true, gambarMime: true, gambar: true },
     });
     if (!product?.gambarData || !product.gambarMime) throw errorResponse('Gambar tidak ditemukan', 404);
-    res.type(product.gambarMime).set('Cache-Control', 'public, max-age=3600').send(Buffer.from(product.gambarData));
+    res.type(product.gambarMime).set('Cache-Control', 'no-cache, must-revalidate').send(Buffer.from(product.gambarData));
   } catch (error) {
     next(error);
   }
@@ -100,6 +106,7 @@ router.post('/', async (req: AuthRequest, res: Response, next) => {
       harga_default,
       hargaDefault,
       gambar,
+      gambarNama,
       deskripsi,
     } = req.body;
 
@@ -118,27 +125,29 @@ router.post('/', async (req: AuthRequest, res: Response, next) => {
         varian,
         satuan: satuan || 'pcs',
         hargaDefault: (hargaDefault ?? harga_default) || 0,
-        gambar: image ? null : gambar,
+        gambar: image ? null : (typeof gambar === 'string' && gambar ? gambar : null),
+        gambarNama: image ? cleanImageName(gambarNama) : null,
         ...(image ? { gambarData: image.data, gambarMime: image.mime } : {}),
         deskripsi,
         aktif: true,
       }
     });
 
-    // Log audit
+    if (image) {
+      const imagePath = `/api/public/products/${product.id}/image?v=${Date.now()}`;
+      await prisma.produk.update({ where: { id: product.id }, data: { gambar: imagePath } });
+      product.gambar = imagePath;
+    }
     await logManualAction(
       req.user!.id,
       'produk',
       AksiLog.TAMBAH,
       product.namaBarang,
       `Product created: ${product.namaBarang}`,
-      product.id
+      product.id,
+      undefined,
+      withoutImageData(product)
     );
-
-    if (image) {
-      await prisma.produk.update({ where: { id: product.id }, data: { gambar: `/api/public/products/${product.id}/image` } });
-      product.gambar = `/api/public/products/${product.id}/image`;
-    }
     res.json(successResponse(withoutImageData(product)));
   } catch (error) {
     next(error);
@@ -159,6 +168,7 @@ router.put('/:id', async (req: AuthRequest, res: Response, next) => {
       harga_default,
       hargaDefault,
       gambar,
+      gambarNama,
       deskripsi,
       aktif,
       is_active
@@ -166,7 +176,7 @@ router.put('/:id', async (req: AuthRequest, res: Response, next) => {
 
     const existing = await prisma.produk.findUnique({
       where: { id },
-      select: { id: true, kode: true, namaBarang: true, varian: true, satuan: true, hargaDefault: true, gambar: true, deskripsi: true, aktif: true, dibuatPada: true }
+      select: { id: true, kode: true, namaBarang: true, varian: true, satuan: true, hargaDefault: true, gambar: true, gambarNama: true, deskripsi: true, aktif: true, dibuatPada: true }
     });
     if (!existing) {
       throw errorResponse('Product not found', 404);
@@ -181,15 +191,18 @@ router.put('/:id', async (req: AuthRequest, res: Response, next) => {
     if (gambar !== undefined) {
       const image = imageDataFrom(gambar);
       if (image) {
-        updateData.gambar = `/api/public/products/${id}/image`;
+        updateData.gambar = `/api/public/products/${id}/image?v=${Date.now()}`;
         updateData.gambarData = image.data;
         updateData.gambarMime = image.mime;
+        updateData.gambarNama = cleanImageName(gambarNama);
       } else if (gambar === '') {
         updateData.gambar = null;
         updateData.gambarData = null;
         updateData.gambarMime = null;
+        updateData.gambarNama = null;
       } else updateData.gambar = gambar;
     }
+    if (gambarNama !== undefined && gambar !== undefined && gambar !== '') updateData.gambarNama = cleanImageName(gambarNama);
     if (deskripsi !== undefined) updateData.deskripsi = deskripsi;
     if (aktif !== undefined || is_active !== undefined) updateData.aktif = (aktif !== undefined ? aktif : is_active) === true;
 
@@ -207,7 +220,7 @@ router.put('/:id', async (req: AuthRequest, res: Response, next) => {
       `Product updated: ${product.namaBarang}`,
       product.id,
       existing,
-      Object.fromEntries(Object.entries(updateData).filter(([key]) => key !== 'gambarData'))
+      withoutImageData(product)
     );
 
     res.json(successResponse(withoutImageData(product)));

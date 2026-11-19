@@ -62,7 +62,7 @@ router.get('/:id/image', async (req: Request, res: Response, next) => {
     if (!product?.gambarData || !product.gambarMime || !product.aktif) {
       throw errorResponse('Gambar tidak ditemukan', 404);
     }
-    res.type(product.gambarMime).set('Cache-Control', 'public, max-age=3600').send(Buffer.from(product.gambarData));
+    res.type(product.gambarMime).set('Cache-Control', 'no-cache, must-revalidate').send(Buffer.from(product.gambarData));
   } catch (error) {
     next(error);
   }

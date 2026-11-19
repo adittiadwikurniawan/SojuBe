@@ -16,6 +16,8 @@ import cmsPublicRoutes from './routes/cmsPublic';
 import customerRoutes from './routes/customer';
 import usersRoutes from './routes/users';
 import customerOrdersAdminRoutes from './routes/customerOrdersAdmin';
+import customersAdminRoutes from './routes/customersAdmin';
+import customerCampaignsAdminRoutes from './routes/customerCampaignsAdmin';
 
 dotenv.config();
 
@@ -43,6 +45,8 @@ app.use('/api/v1/free-tables', freeTableRoutes);
 app.use('/api/v1/cms', cmsRoutes);
 app.use('/api/v1/users', usersRoutes);
 app.use('/api/v1/customer-orders', customerOrdersAdminRoutes);
+app.use('/api/v1/customers', customersAdminRoutes);
+app.use('/api/v1/customer-campaigns', customerCampaignsAdminRoutes);
 
 // Akun, keranjang, dan pesanan customer terpisah dari API admin.
 app.use('/api/customer', customerRoutes);
