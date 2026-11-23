@@ -72,8 +72,8 @@ const PRODUCT_SAFE_SELECT = {
   dibuatPada: true,
 } as const;
 
-// All routes require authentication
-router.use(authenticate, authorizeRoles('SUPER_ADMIN'));
+// All routes require authentication (ADMIN and SUPER_ADMIN per PRD Section 2)
+router.use(authenticate, authorizeRoles('ADMIN', 'SUPER_ADMIN'));
 
 // GET /products
 router.get('/', async (req: AuthRequest, res: Response, next) => {
