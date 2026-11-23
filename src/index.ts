@@ -37,7 +37,9 @@ app.use(express.json({ limit: '7mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // Rate limiting for auth endpoints
-app.use('/api/v1/auth', authRateLimiter);
+app.use('/api/v1/auth/login', authRateLimiter);
+app.use('/api/v1/auth/forgot-password', authRateLimiter);
+app.use('/api/v1/auth/reset-password', authRateLimiter);
 app.use('/api/customer/auth', authRateLimiter);
 
 // Routes

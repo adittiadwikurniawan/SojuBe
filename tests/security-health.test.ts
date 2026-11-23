@@ -135,11 +135,18 @@ describe('TASK-002: Security Middleware, CORS, Rate Limiting & /api/health', () 
       });
     });
 
-    it('mounts authRateLimiter on /api/v1/auth (standard rate-limit headers present)', async () => {
+    it('mounts authRateLimiter on /api/v1/auth/login (standard rate-limit headers present)', async () => {
       const res = await request(app).post('/api/v1/auth/login').send({});
 
       expect(res.headers['ratelimit-limit']).toBeDefined();
       expect(res.headers['ratelimit-remaining']).toBeDefined();
+    });
+
+    it('does not apply authRateLimiter to GET /api/v1/auth/me', async () => {
+      const res = await request(app).get('/api/v1/auth/me');
+
+      expect(res.headers['ratelimit-limit']).toBeUndefined();
+      expect(res.headers['ratelimit-remaining']).toBeUndefined();
     });
   });
 
