@@ -59,23 +59,67 @@ enum StatusKampanyePelanggan {
   DRAF
 }
 
-model Pengguna {
-  id           Int      @id @default(autoincrement())
-  nama         String   @db.VarChar(100)
-  email        String   @unique @db.VarChar(150)
-  passwordHash String   @map("password_hash") @db.VarChar(255)
-  peran        PeranPengguna @default(ADMIN)
-  dibuatPada   DateTime @default(now()) @map("dibuat_pada") @db.DateTime(0)
+enum TokenPurpose {
+  RESET_PASSWORD
+  VERIFY_EMAIL
+  ADMIN_INVITE
+}
 
-  transaksi       Transaksi[]
-  logAudit        LogAudit[]
-  jenisTransaksi  JenisTransaksi[]
-  kolomCustom     KolomCustom[]
-  tabelBebas      TabelBebas[]
-  cmsContent      CmsContent[]
-  kampanyePelanggan KampanyePelanggan[]
+enum TokenTargetType {
+  ADMIN
+  CUSTOMER
+}
+
+enum AiDocumentSourceType {
+  SOP
+  FAQ
+  PRODUK
+  CMS
+  MANUAL
+}
+
+enum AiRoleScope {
+  ALL_ADMIN
+  SUPER_ADMIN
+}
+
+enum AiMessageRole {
+  USER
+  ASSISTANT
+}
+
+enum AiRoutePath {
+  SQL_TOOL
+  VECTOR_RAG
+  ACTION_DRAFT
+  REFUSAL
+}
+
+model Pengguna {
+  id                Int           @id @default(autoincrement())
+  nama              String        @db.VarChar(100)
+  email             String        @unique @db.VarChar(150)
+  passwordHash      String        @map("password_hash") @db.VarChar(255)
+  peran             PeranPengguna @default(ADMIN)
+  aktif             Boolean       @default(true)
+  terakhirMasukPada DateTime?     @map("terakhir_masuk_pada") @db.DateTime(0)
+  dibuatOleh        Int?          @map("dibuat_oleh")
+  dibuatPada        DateTime      @default(now()) @map("dibuat_pada") @db.DateTime(0)
+  diubahPada        DateTime      @updatedAt @map("diubah_pada") @db.DateTime(0)
+
+  transaksi           Transaksi[]
+  logAudit            LogAudit[]
+  jenisTransaksi      JenisTransaksi[]
+  kolomCustom         KolomCustom[]
+  tabelBebas          TabelBebas[]
+  cmsContent          CmsContent[]
+  kampanyePelanggan   KampanyePelanggan[]
+  passwordResetTokens PasswordResetToken[]
+  aiDocuments         AiDocument[]
+  aiConversations     AiConversation[]
 
   @@map("pengguna")
+  @@index([aktif, peran])
 }
 
 /// Master Transaksi — daftar jenis transaksi, full CRUD oleh user.
@@ -126,6 +170,7 @@ model Produk {
   satuan        String   @default("pcs") @db.VarChar(20)
   hargaDefault  Decimal  @default(0) @map("harga_default") @db.Decimal(15, 2)
   gambar        String?  @db.Text
+  gambarUrl     String?  @map("gambar_url") @db.Text
   gambarNama    String?  @map("gambar_nama") @db.VarChar(255)
   gambarData    Bytes?   @map("gambar_data") @db.LongBlob
   gambarMime    String?  @map("gambar_mime") @db.VarChar(100)
@@ -150,12 +195,14 @@ model Pelanggan {
   aktif        Boolean  @default(true)
   dibuatPada   DateTime @default(now()) @map("dibuat_pada") @db.DateTime(0)
   diubahPada   DateTime @updatedAt @map("diubah_pada") @db.DateTime(0)
+  emailTerverifikasiPada DateTime? @map("email_terverifikasi_pada") @db.DateTime(0)
   terakhirMasukPada DateTime? @map("terakhir_masuk_pada") @db.DateTime(0)
   promosiDiizinkan Boolean @default(false) @map("promosi_diizinkan")
   promosiDisetujuiPada DateTime? @map("promosi_disetujui_pada") @db.DateTime(0)
   promosiBerhentiPada DateTime? @map("promosi_berhenti_pada") @db.DateTime(0)
 
-  pesanan PesananPelanggan[]
+  pesanan             PesananPelanggan[]
+  passwordResetTokens PasswordResetToken[]
 
   @@map("pelanggan")
   @@index([aktif, terakhirMasukPada])
@@ -338,5 +385,96 @@ model CmsContent {
   pengguna     Pengguna @relation(fields: [dibuatOleh], references: [id])
 
   @@map("cms_content")
+}
+
+/// Token sekali pakai (SHA-256 hash) untuk reset password, verifikasi email, dan undangan admin.
+model PasswordResetToken {
+  id          Int             @id @default(autoincrement())
+  tokenHash   String          @unique @map("token_hash") @db.VarChar(64)
+  purpose     TokenPurpose
+  targetType  TokenTargetType @map("target_type")
+  penggunaId  Int?            @map("pengguna_id")
+  pelangganId Int?            @map("pelanggan_id")
+  expiresAt   DateTime        @map("expires_at") @db.DateTime(0)
+  usedAt      DateTime?       @map("used_at") @db.DateTime(0)
+  createdAt   DateTime        @default(now()) @map("created_at") @db.DateTime(0)
+
+  pengguna  Pengguna?  @relation(fields: [penggunaId], references: [id], onDelete: Cascade)
+  pelanggan Pelanggan? @relation(fields: [pelangganId], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_token")
+  @@index([purpose, expiresAt])
+  @@index([penggunaId])
+  @@index([pelangganId])
+}
+
+/// Dokumen pengetahuan untuk Hybrid RAG (SOP, FAQ, Produk, CMS, Manual). Dilarang memuat PII pelanggan.
+model AiDocument {
+  id         Int                  @id @default(autoincrement())
+  title      String               @db.VarChar(200)
+  sourceType AiDocumentSourceType @map("source_type")
+  sourceRef  String?              @map("source_ref") @db.VarChar(150)
+  roleScope  AiRoleScope          @default(ALL_ADMIN) @map("role_scope")
+  content    String               @db.LongText
+  aktif      Boolean              @default(true)
+  createdBy  Int?                 @map("created_by")
+  createdAt  DateTime             @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt  DateTime             @updatedAt @map("updated_at") @db.DateTime(0)
+
+  pengguna Pengguna? @relation(fields: [createdBy], references: [id], onDelete: SetNull)
+  chunks   AiChunk[]
+
+  @@map("ai_document")
+  @@index([sourceType, aktif])
+  @@index([roleScope, aktif])
+}
+
+/// Potongan teks dokumen beserta embedding JSON (gemini-embedding-001) untuk cosine similarity retrieval.
+model AiChunk {
+  id         Int         @id @default(autoincrement())
+  documentId Int         @map("document_id")
+  chunkIndex Int         @map("chunk_index")
+  content    String      @db.Text
+  embedding  Json
+  roleScope  AiRoleScope @map("role_scope")
+  createdAt  DateTime    @default(now()) @map("created_at") @db.DateTime(0)
+
+  document AiDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@map("ai_chunk")
+  @@index([documentId])
+  @@index([roleScope])
+}
+
+/// Riwayat percakapan Hybrid RAG per pengguna admin.
+model AiConversation {
+  id         Int      @id @default(autoincrement())
+  penggunaId Int      @map("pengguna_id")
+  title      String   @db.VarChar(200)
+  createdAt  DateTime @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.DateTime(0)
+
+  pengguna Pengguna    @relation(fields: [penggunaId], references: [id], onDelete: Cascade)
+  messages AiMessage[]
+
+  @@map("ai_conversation")
+  @@index([penggunaId, updatedAt])
+}
+
+/// Pesan dalam percakapan Hybrid RAG termasuk jejak jalur (SQL/RAG/Draft/Refusal), sitasi, dan draft aksi.
+model AiMessage {
+  id             Int           @id @default(autoincrement())
+  conversationId Int           @map("conversation_id")
+  role           AiMessageRole
+  content        String        @db.LongText
+  routePath      AiRoutePath?  @map("route_path")
+  citations      Json?
+  actions        Json?
+  createdAt      DateTime      @default(now()) @map("created_at") @db.DateTime(0)
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@map("ai_message")
+  @@index([conversationId, createdAt])
 }
 
