@@ -25,9 +25,10 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
     if (decoded.type === 'customer') return next(errorResponse('Token customer tidak dapat digunakan untuk admin', 401));
     const user = await prisma.pengguna.findUnique({
       where: { id: decoded.id },
-      select: { id: true, email: true, peran: true },
+      select: { id: true, email: true, peran: true, aktif: true },
     });
     if (!user) return next(errorResponse('Akun admin tidak ditemukan', 401));
+    if (!user.aktif) return next(errorResponse('Akun admin dinonaktifkan. Hubungi Super Admin.', 403));
     req.user = { id: user.id, email: user.email, role: user.peran };
     return next();
   } catch (error) {
