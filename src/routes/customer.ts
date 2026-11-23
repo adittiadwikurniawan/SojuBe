@@ -1,31 +1,29 @@
 import { Router, Response } from 'express';
-import bcrypt from 'bcrypt';
-import jwt from 'jsonwebtoken';
 import { randomInt } from 'crypto';
 import { Prisma } from '@prisma/client';
 import prisma from '../utils/database';
 import { CustomerRequest, authenticateCustomer } from '../middleware/customerAuth';
 import { errorResponse, successResponse } from '../utils/response';
+import {
+  CustomerAuthServiceError,
+  changeCustomerPassword,
+  loginCustomer,
+  publicCustomer,
+  registerCustomer,
+  requestCustomerPasswordReset,
+  resendCustomerVerification,
+  resetCustomerPassword,
+  verifyCustomerEmail,
+} from '../services/customerAuthService';
 
 const router = Router();
-const publicCustomer = (customer: { id: number; nama: string; email: string; noTelepon: string; alamat: string; dibuatPada: Date; terakhirMasukPada: Date | null; promosiDiizinkan: boolean; promosiDisetujuiPada: Date | null; promosiBerhentiPada: Date | null }) => ({
-  id: customer.id,
-  nama: customer.nama,
-  email: customer.email,
-  noTelepon: customer.noTelepon,
-  alamat: customer.alamat,
-  dibuatPada: customer.dibuatPada,
-  terakhirMasukPada: customer.terakhirMasukPada,
-  promosiDiizinkan: customer.promosiDiizinkan,
-  promosiDisetujuiPada: customer.promosiDisetujuiPada,
-  promosiBerhentiPada: customer.promosiBerhentiPada,
-});
 
-function customerToken(id: number, email: string) {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) throw new Error('JWT_SECRET belum diatur di environment');
-  return jwt.sign({ id, email, type: 'customer' }, secret, { expiresIn: '30d' });
-}
+const mapServiceError = (error: unknown) => {
+  if (error instanceof CustomerAuthServiceError) {
+    return errorResponse(error.message, error.status);
+  }
+  return error;
+};
 
 function varianValid(raw: string | null, value: string) {
   if (!value) return true;
@@ -72,46 +70,112 @@ async function validCartItems(input: unknown) {
 // POST /api/customer/auth/daftar
 router.post('/auth/daftar', async (req, res, next) => {
   try {
-    const nama = typeof req.body?.nama === 'string' ? req.body.nama.trim() : '';
-    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-    const noTelepon = typeof req.body?.noTelepon === 'string' ? req.body.noTelepon.trim() : '';
-    const alamat = typeof req.body?.alamat === 'string' ? req.body.alamat.trim() : '';
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const promosiDiizinkan = req.body?.promosiDiizinkan === true;
-    if (!nama || !email || !noTelepon || !alamat || password.length < 8) {
-      throw errorResponse('Nama, email, nomor telepon, alamat, dan password minimal 8 karakter wajib diisi');
-    }
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw errorResponse('Format email tidak valid');
-    const existing = await prisma.pelanggan.findUnique({ where: { email }, select: { id: true } });
-    if (existing) throw errorResponse('Email sudah terdaftar', 409);
-    const customer = await prisma.pelanggan.create({
-      data: {
-        nama, email, noTelepon, alamat, passwordHash: await bcrypt.hash(password, 10), keranjang: [],
-        promosiDiizinkan,
-        ...(promosiDiizinkan ? { promosiDisetujuiPada: new Date() } : {}),
-      },
+    const result = await registerCustomer({
+      nama: typeof req.body?.nama === 'string' ? req.body.nama : '',
+      email: typeof req.body?.email === 'string' ? req.body.email : '',
+      noTelepon: typeof req.body?.noTelepon === 'string' ? req.body.noTelepon : '',
+      alamat: typeof req.body?.alamat === 'string' ? req.body.alamat : '',
+      password: typeof req.body?.password === 'string' ? req.body.password : '',
+      promosiDiizinkan: req.body?.promosiDiizinkan === true,
     });
-    res.status(201).json(successResponse({ token: customerToken(customer.id, customer.email), customer: publicCustomer(customer) }));
+    res.status(201).json(successResponse(result));
   } catch (error) {
-    next(error);
+    next(mapServiceError(error));
   }
 });
 
 // POST /api/customer/auth/masuk
 router.post('/auth/masuk', async (req, res, next) => {
   try {
-    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    const customer = await prisma.pelanggan.findUnique({ where: { email } });
-    if (!customer?.aktif || !(await bcrypt.compare(password, customer.passwordHash))) throw errorResponse('Email atau password salah', 401);
-    const updated = await prisma.pelanggan.update({ where: { id: customer.id }, data: { terakhirMasukPada: new Date() } });
-    res.json(successResponse({ token: customerToken(updated.id, updated.email), customer: publicCustomer(updated) }));
+    const result = await loginCustomer({
+      email: typeof req.body?.email === 'string' ? req.body.email : '',
+      password: typeof req.body?.password === 'string' ? req.body.password : '',
+    });
+    res.json(successResponse(result));
   } catch (error) {
-    next(error);
+    next(mapServiceError(error));
+  }
+});
+
+// POST /api/customer/auth/verifikasi-email
+router.post('/auth/verifikasi-email', async (req, res, next) => {
+  try {
+    const token = typeof req.body?.token === 'string' ? req.body.token : '';
+    const result = await verifyCustomerEmail(token);
+    res.status(200).json(successResponse(result.customer, result.message));
+  } catch (error) {
+    next(mapServiceError(error));
+  }
+});
+
+// POST /api/customer/auth/kirim-ulang-verifikasi
+router.post('/auth/kirim-ulang-verifikasi', async (req, res, next) => {
+  try {
+    const email = typeof req.body?.email === 'string' ? req.body.email : '';
+    const result = await resendCustomerVerification(email);
+    res.status(200).json(successResponse(null, result.message));
+  } catch (error) {
+    next(mapServiceError(error));
+  }
+});
+
+// POST /api/customer/auth/lupa-password
+router.post('/auth/lupa-password', async (req, res, next) => {
+  try {
+    const email = typeof req.body?.email === 'string' ? req.body.email : '';
+    const result = await requestCustomerPasswordReset(email);
+    res.status(200).json(successResponse(null, result.message));
+  } catch (error) {
+    next(mapServiceError(error));
+  }
+});
+
+// POST /api/customer/auth/reset-password
+router.post('/auth/reset-password', async (req, res, next) => {
+  try {
+    const token = typeof req.body?.token === 'string' ? req.body.token : '';
+    const passwordBaru =
+      typeof req.body?.passwordBaru === 'string'
+        ? req.body.passwordBaru
+        : typeof req.body?.newPassword === 'string'
+          ? req.body.newPassword
+          : typeof req.body?.password === 'string'
+            ? req.body.password
+            : '';
+    const result = await resetCustomerPassword({ token, passwordBaru });
+    res.status(200).json(successResponse(null, result.message));
+  } catch (error) {
+    next(mapServiceError(error));
   }
 });
 
 router.use(authenticateCustomer);
+
+// POST /api/customer/ubah-password
+router.post('/ubah-password', async (req: CustomerRequest, res: Response, next) => {
+  try {
+    const passwordLama =
+      typeof req.body?.passwordLama === 'string'
+        ? req.body.passwordLama
+        : typeof req.body?.currentPassword === 'string'
+          ? req.body.currentPassword
+          : '';
+    const passwordBaru =
+      typeof req.body?.passwordBaru === 'string'
+        ? req.body.passwordBaru
+        : typeof req.body?.newPassword === 'string'
+          ? req.body.newPassword
+          : '';
+    const result = await changeCustomerPassword({
+      customerId: req.customer!.id,
+      passwordLama,
+      passwordBaru,
+    });
+    res.status(200).json(successResponse(null, result.message));
+  } catch (error) {
+    next(mapServiceError(error));
+  }
+});
 
 // GET/PATCH /api/customer/profil
 router.get('/profil', async (req: CustomerRequest, res: Response, next) => {
