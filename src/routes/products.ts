@@ -1,19 +1,49 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
+import multer from 'multer';
 import { authenticate, authorizeRoles, AuthRequest } from '../middleware/auth';
 import { successResponse, errorResponse } from '../utils/response';
 import prisma from '../utils/database';
 import { logManualAction } from '../services/auditLogService';
+import {
+  MAX_IMAGE_SIZE_BYTES,
+  isS3Configured,
+  parseImageDataUri,
+  uploadProductImage,
+  validateImageBuffer,
+  warnS3FallbackOnce,
+  ParsedImage,
+} from '../services/storageService';
 import { AksiLog } from '@prisma/client';
 
 const router = Router();
 
-const imageDataFrom = (value: unknown): { data: Buffer; mime: string } | null => {
-  if (typeof value !== 'string' || !value.startsWith('data:image/')) return null;
-  const match = value.match(/^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/]+=*)$/);
-  if (!match) throw errorResponse('Format gambar tidak valid', 400);
-  const data = Buffer.from(match[2], 'base64');
-  if (!data.length || data.length > 5 * 1024 * 1024) throw errorResponse('Ukuran gambar maksimal 5 MB', 400);
-  return { data, mime: match[1] };
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_IMAGE_SIZE_BYTES },
+});
+
+const optionalImageUpload = (req: Request, res: Response, next: NextFunction) => {
+  if (!req.is('multipart/form-data')) {
+    return next();
+  }
+  upload.single('gambar')(req, res, (err: unknown) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return next(errorResponse('Ukuran gambar maksimal 5 MB', 400));
+      }
+      return next(errorResponse(err.message || 'Upload gambar tidak valid', 400));
+    }
+    return next(err);
+  });
+};
+
+const extractIncomingImage = (req: Request, gambar: unknown): { image: ParsedImage | null; fileName?: string } => {
+  if (req.file) {
+    const validated = validateImageBuffer(req.file.buffer, req.file.mimetype);
+    return { image: validated, fileName: req.file.originalname };
+  }
+  return { image: parseImageDataUri(gambar) };
 };
 
 const cleanImageName = (value: unknown): string | null => {
@@ -26,6 +56,21 @@ const withoutImageData = <T extends { gambarData?: Uint8Array | null; gambarMime
   const { gambarData: _data, gambarMime: _mime, ...safeProduct } = product;
   return safeProduct;
 };
+
+const PRODUCT_SAFE_SELECT = {
+  id: true,
+  kode: true,
+  namaBarang: true,
+  varian: true,
+  satuan: true,
+  hargaDefault: true,
+  gambar: true,
+  gambarUrl: true,
+  gambarNama: true,
+  deskripsi: true,
+  aktif: true,
+  dibuatPada: true,
+} as const;
 
 // All routes require authentication
 router.use(authenticate, authorizeRoles('SUPER_ADMIN'));
@@ -52,7 +97,7 @@ router.get('/', async (req: AuthRequest, res: Response, next) => {
     const products = await prisma.produk.findMany({
       where,
       orderBy: { dibuatPada: 'desc' },
-      select: { id: true, kode: true, namaBarang: true, varian: true, satuan: true, hargaDefault: true, gambar: true, gambarNama: true, deskripsi: true, aktif: true, dibuatPada: true }
+      select: PRODUCT_SAFE_SELECT,
     });
 
     res.json(successResponse(products));
@@ -66,7 +111,7 @@ router.get('/:id', async (req: AuthRequest, res: Response, next) => {
   try {
     const product = await prisma.produk.findUnique({
       where: { id: parseInt(String(req.params.id)) },
-      select: { id: true, kode: true, namaBarang: true, varian: true, satuan: true, hargaDefault: true, gambar: true, gambarNama: true, deskripsi: true, aktif: true, dibuatPada: true }
+      select: PRODUCT_SAFE_SELECT,
     });
 
     if (!product) {
@@ -94,7 +139,7 @@ router.get('/:id/image', async (req: Request, res: Response, next) => {
 });
 
 // POST /products
-router.post('/', async (req: AuthRequest, res: Response, next) => {
+router.post('/', optionalImageUpload, async (req: AuthRequest, res: Response, next) => {
   try {
     const {
       kode,
@@ -106,16 +151,30 @@ router.post('/', async (req: AuthRequest, res: Response, next) => {
       harga_default,
       hargaDefault,
       gambar,
+      gambarUrl,
       gambarNama,
       deskripsi,
     } = req.body;
 
     const finalKode = kode || kode_produk || `PRD${Date.now()}`;
     const finalNama = namaBarang || nama_barang;
-    const image = imageDataFrom(gambar);
+    const { image, fileName } = extractIncomingImage(req, gambar);
+    const s3Enabled = isS3Configured();
 
     if (!finalNama) {
       throw errorResponse('namaBarang (nama_barang) is required');
+    }
+
+    const plainGambar = !image && typeof gambar === 'string' && gambar ? gambar : null;
+    const plainGambarUrl =
+      !image && typeof gambarUrl === 'string' && gambarUrl
+        ? gambarUrl
+        : plainGambar && /^https?:\/\//i.test(plainGambar)
+          ? plainGambar
+          : null;
+
+    if (image && !s3Enabled) {
+      warnS3FallbackOnce();
     }
 
     const product = await prisma.produk.create({
@@ -125,18 +184,41 @@ router.post('/', async (req: AuthRequest, res: Response, next) => {
         varian,
         satuan: satuan || 'pcs',
         hargaDefault: (hargaDefault ?? harga_default) || 0,
-        gambar: image ? null : (typeof gambar === 'string' && gambar ? gambar : null),
-        gambarNama: image ? cleanImageName(gambarNama) : null,
-        ...(image ? { gambarData: image.data, gambarMime: image.mime } : {}),
+        gambar: image ? null : plainGambar ?? plainGambarUrl,
+        gambarUrl: image ? null : plainGambarUrl,
+        gambarNama: image ? cleanImageName(gambarNama ?? fileName) : null,
+        ...(image && !s3Enabled ? { gambarData: image.data, gambarMime: image.mime } : {}),
         deskripsi,
         aktif: true,
       }
     });
 
     if (image) {
-      const imagePath = `/api/public/products/${product.id}/image?v=${Date.now()}`;
-      await prisma.produk.update({ where: { id: product.id }, data: { gambar: imagePath } });
-      product.gambar = imagePath;
+      if (s3Enabled) {
+        const uploaded = await uploadProductImage({
+          productId: product.id,
+          data: image.data,
+          mime: image.mime,
+        });
+        await prisma.produk.update({
+          where: { id: product.id },
+          data: {
+            gambarUrl: uploaded.url,
+            gambar: uploaded.url,
+            gambarData: null,
+            gambarMime: null,
+          },
+        });
+        product.gambarUrl = uploaded.url;
+        product.gambar = uploaded.url;
+        product.gambarData = null;
+        product.gambarMime = null;
+      } else {
+        const imagePath = `/api/public/products/${product.id}/image?v=${Date.now()}`;
+        await prisma.produk.update({ where: { id: product.id }, data: { gambar: imagePath, gambarUrl: null } });
+        product.gambar = imagePath;
+        product.gambarUrl = null;
+      }
     }
     await logManualAction(
       req.user!.id,
@@ -155,7 +237,7 @@ router.post('/', async (req: AuthRequest, res: Response, next) => {
 });
 
 // PUT /products/:id
-router.put('/:id', async (req: AuthRequest, res: Response, next) => {
+router.put('/:id', optionalImageUpload, async (req: AuthRequest, res: Response, next) => {
   try {
     const id = parseInt(String(req.params.id));
     const {
@@ -168,6 +250,7 @@ router.put('/:id', async (req: AuthRequest, res: Response, next) => {
       harga_default,
       hargaDefault,
       gambar,
+      gambarUrl,
       gambarNama,
       deskripsi,
       aktif,
@@ -176,7 +259,7 @@ router.put('/:id', async (req: AuthRequest, res: Response, next) => {
 
     const existing = await prisma.produk.findUnique({
       where: { id },
-      select: { id: true, kode: true, namaBarang: true, varian: true, satuan: true, hargaDefault: true, gambar: true, gambarNama: true, deskripsi: true, aktif: true, dibuatPada: true }
+      select: PRODUCT_SAFE_SELECT,
     });
     if (!existing) {
       throw errorResponse('Product not found', 404);
@@ -188,23 +271,56 @@ router.put('/:id', async (req: AuthRequest, res: Response, next) => {
     if (varian !== undefined) updateData.varian = varian;
     if (satuan !== undefined) updateData.satuan = satuan;
     if (hargaDefault !== undefined || harga_default !== undefined) updateData.hargaDefault = hargaDefault ?? harga_default;
-    if (gambar !== undefined) {
-      const image = imageDataFrom(gambar);
+
+    if (req.file || gambar !== undefined) {
+      const { image, fileName } = extractIncomingImage(req, gambar);
       if (image) {
-        updateData.gambar = `/api/public/products/${id}/image?v=${Date.now()}`;
-        updateData.gambarData = image.data;
-        updateData.gambarMime = image.mime;
-        updateData.gambarNama = cleanImageName(gambarNama);
+        if (isS3Configured()) {
+          const uploaded = await uploadProductImage({
+            productId: id,
+            data: image.data,
+            mime: image.mime,
+          });
+          updateData.gambarUrl = uploaded.url;
+          updateData.gambar = uploaded.url;
+          updateData.gambarData = null;
+          updateData.gambarMime = null;
+          updateData.gambarNama = cleanImageName(gambarNama ?? fileName);
+        } else {
+          warnS3FallbackOnce();
+          updateData.gambar = `/api/public/products/${id}/image?v=${Date.now()}`;
+          updateData.gambarUrl = null;
+          updateData.gambarData = image.data;
+          updateData.gambarMime = image.mime;
+          updateData.gambarNama = cleanImageName(gambarNama ?? fileName);
+        }
       } else if (gambar === '') {
         updateData.gambar = null;
+        updateData.gambarUrl = null;
         updateData.gambarData = null;
         updateData.gambarMime = null;
         updateData.gambarNama = null;
-      } else updateData.gambar = gambar;
+      } else if (gambar !== undefined) {
+        updateData.gambar = gambar;
+        if (typeof gambar === 'string' && /^https?:\/\//i.test(gambar)) {
+          updateData.gambarUrl = gambar;
+        }
+      }
+    } else if (gambarUrl !== undefined) {
+      updateData.gambarUrl = gambarUrl || null;
+      if (gambarUrl) {
+        updateData.gambar = gambarUrl;
+      }
     }
-    if (gambarNama !== undefined && gambar !== undefined && gambar !== '') updateData.gambarNama = cleanImageName(gambarNama);
+
+    if (gambarNama !== undefined && gambar !== undefined && gambar !== '') {
+      updateData.gambarNama = cleanImageName(gambarNama);
+    }
     if (deskripsi !== undefined) updateData.deskripsi = deskripsi;
-    if (aktif !== undefined || is_active !== undefined) updateData.aktif = (aktif !== undefined ? aktif : is_active) === true;
+    if (aktif !== undefined || is_active !== undefined) {
+      const rawAktif = aktif !== undefined ? aktif : is_active;
+      updateData.aktif = rawAktif === true || rawAktif === 'true';
+    }
 
     const product = await prisma.produk.update({
       where: { id },

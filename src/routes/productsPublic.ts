@@ -21,7 +21,7 @@ router.get('/', async (req: Request, res: Response, next) => {
     const products = await prisma.produk.findMany({
       where,
       orderBy: { dibuatPada: 'desc' },
-      select: { id: true, kode: true, namaBarang: true, varian: true, satuan: true, hargaDefault: true, gambar: true, deskripsi: true, aktif: true, dibuatPada: true }
+      select: { id: true, kode: true, namaBarang: true, varian: true, satuan: true, hargaDefault: true, gambar: true, gambarUrl: true, deskripsi: true, aktif: true, dibuatPada: true }
     });
 
     res.json(successResponse(products));
@@ -35,7 +35,7 @@ router.get('/:id', async (req: Request, res: Response, next) => {
   try {
     const product = await prisma.produk.findUnique({
       where: { id: parseInt(String(req.params.id)) },
-      select: { id: true, kode: true, namaBarang: true, varian: true, satuan: true, hargaDefault: true, gambar: true, deskripsi: true, aktif: true, dibuatPada: true }
+      select: { id: true, kode: true, namaBarang: true, varian: true, satuan: true, hargaDefault: true, gambar: true, gambarUrl: true, deskripsi: true, aktif: true, dibuatPada: true }
     });
 
     if (!product) {
