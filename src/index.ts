@@ -6,7 +6,9 @@ import {
   helmetMiddleware,
   corsMiddleware,
   authRateLimiter,
+  aiRateLimiter,
 } from './middleware/security';
+import aiRoutes from './routes/ai';
 import authRoutes from './routes/auth';
 import dashboardRoutes from './routes/dashboard';
 import productRoutes from './routes/products';
@@ -36,11 +38,12 @@ app.use(corsMiddleware);
 app.use(express.json({ limit: '7mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Rate limiting for auth endpoints
+// Rate limiting for auth and AI endpoints
 app.use('/api/v1/auth/login', authRateLimiter);
 app.use('/api/v1/auth/forgot-password', authRateLimiter);
 app.use('/api/v1/auth/reset-password', authRateLimiter);
 app.use('/api/customer/auth', authRateLimiter);
+app.use('/api/v1/ai', aiRateLimiter);
 
 // Routes
 app.use('/api/v1/auth', authRoutes);
@@ -57,6 +60,7 @@ app.use('/api/v1/users', usersRoutes);
 app.use('/api/v1/customer-orders', customerOrdersAdminRoutes);
 app.use('/api/v1/customers', customersAdminRoutes);
 app.use('/api/v1/customer-campaigns', customerCampaignsAdminRoutes);
+app.use('/api/v1/ai', aiRoutes);
 
 // Akun, keranjang, dan pesanan customer terpisah dari API admin.
 app.use('/api/customer', customerRoutes);
