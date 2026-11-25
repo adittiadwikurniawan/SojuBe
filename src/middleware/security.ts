@@ -9,6 +9,7 @@ const DEFAULT_LOCAL_ORIGINS = [
 ];
 
 const DEV_LAN_ORIGIN_REGEX = /^https?:\/\/192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$/;
+const DEV_LOCALHOST_ORIGIN_REGEX = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
 const normalizeOrigin = (origin: string): string => origin.trim().replace(/\/+$/, '');
 
@@ -42,7 +43,10 @@ export const isOriginAllowed = (
   }
 
   const env = options?.nodeEnv ?? process.env.NODE_ENV;
-  if (env !== 'production' && DEV_LAN_ORIGIN_REGEX.test(normalized)) {
+  if (
+    env !== 'production' &&
+    (DEV_LAN_ORIGIN_REGEX.test(normalized) || DEV_LOCALHOST_ORIGIN_REGEX.test(normalized))
+  ) {
     return true;
   }
 
