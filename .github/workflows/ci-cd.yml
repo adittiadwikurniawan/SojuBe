@@ -1,0 +1,113 @@
+name: Backend CI/CD (SojuBe)
+
+on:
+  push:
+    branches:
+      - main
+      - BeSojuV3
+      - database-backend-v2.0
+  pull_request:
+    branches:
+      - main
+      - BeSojuV3
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Build, Prisma Validate, Tests & RAG Eval
+    runs-on: ubuntu-latest
+    env:
+      NODE_ENV: test
+      JWT_SECRET: ci-test-jwt-secret-soju-fnb
+      DATABASE_URL: mysql://root:ci@localhost:3306/soju_ci
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate & generate Prisma Client
+        run: |
+          npx prisma validate
+          npx prisma generate
+
+      - name: TypeScript build
+        run: npm run build
+
+      - name: Run unit & integration tests
+        run: npm test
+
+      - name: Run Hybrid RAG golden evaluation suite
+        run: npm run test:rag
+
+  docker-cd:
+    name: Build & Publish Docker Image (GHCR)
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry (GHCR)
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/BeSojuV3' || github.ref == 'refs/heads/main' }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-hook:
+    name: Trigger Cloud Deploy Webhook (Optional)
+    needs: docker-cd
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/BeSojuV3' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Render / Railway Deploy Hook
+        env:
+          DEPLOY_WEBHOOK_URL: ${{ secrets.DEPLOY_WEBHOOK_URL }}
+        run: |
+          if [ -n "$DEPLOY_WEBHOOK_URL" ]; then
+            echo "Triggering deployment webhook..."
+            curl -fsSL -X POST "$DEPLOY_WEBHOOK_URL"
+            echo "Deployment triggered successfully."
+          else
+            echo "DEPLOY_WEBHOOK_URL secret is not configured. Skipping webhook trigger (GHCR image already published)."
+          fi
