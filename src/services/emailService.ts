@@ -1,6 +1,7 @@
+import nodemailer from 'nodemailer';
 import { Resend } from 'resend';
 
-export type EmailDeliveryMode = 'resend' | 'console';
+export type EmailDeliveryMode = 'smtp' | 'resend' | 'console';
 
 export interface EmailSendResult {
   delivered: boolean;
@@ -55,8 +56,37 @@ const getWebAppBaseUrl = (): string => {
   return raw.replace(/\/+$/, '');
 };
 
-const getEmailFrom = (): string => {
-  return process.env.EMAIL_FROM?.trim() || DEFAULT_EMAIL_FROM;
+const DEFAULT_SMTP_HOST = 'smtp.gmail.com';
+const DEFAULT_SMTP_PORT = 465;
+
+const getSmtpConfig = () => {
+  const user = (process.env.SMTP_USER || process.env.GMAIL_USER || '').trim();
+  const rawPass = (process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD || '').trim();
+  const pass = rawPass.replace(/\s+/g, '');
+
+  if (!user || !pass) {
+    return null;
+  }
+
+  const host = process.env.SMTP_HOST?.trim() || DEFAULT_SMTP_HOST;
+  const parsedPort = Number(process.env.SMTP_PORT);
+  const port = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : DEFAULT_SMTP_PORT;
+  const secureEnv = process.env.SMTP_SECURE?.trim().toLowerCase();
+  const secure =
+    secureEnv === 'true' ? true : secureEnv === 'false' ? false : port === 465;
+
+  return { host, port, secure, user, pass };
+};
+
+const getEmailFrom = (smtpUser?: string): string => {
+  const configured = process.env.EMAIL_FROM?.trim();
+  if (configured) {
+    return configured;
+  }
+  if (smtpUser) {
+    return `SOJU FnB <${smtpUser}>`;
+  }
+  return DEFAULT_EMAIL_FROM;
 };
 
 const escapeHtml = (value: string): string => {
@@ -69,6 +99,43 @@ const escapeHtml = (value: string): string => {
 };
 
 const dispatchEmail = async (payload: InternalEmailPayload): Promise<EmailSendResult> => {
+  const smtpConfig = getSmtpConfig();
+
+  if (smtpConfig) {
+    const from = getEmailFrom(smtpConfig.user);
+    const transporter = nodemailer.createTransport({
+      host: smtpConfig.host,
+      port: smtpConfig.port,
+      secure: smtpConfig.secure,
+      auth: {
+        user: smtpConfig.user,
+        pass: smtpConfig.pass,
+      },
+    });
+
+    try {
+      const info = await transporter.sendMail({
+        from,
+        to: payload.to,
+        subject: payload.subject,
+        html: payload.html,
+        text: payload.text,
+      });
+
+      return {
+        delivered: true,
+        mode: 'smtp',
+        messageId: info.messageId,
+        to: payload.to,
+        subject: payload.subject,
+        actionUrl: payload.actionUrl,
+      };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new Error(`Gagal mengirim email melalui SMTP: ${reason}`);
+    }
+  }
+
   const apiKey = process.env.RESEND_API_KEY?.trim();
   const from = getEmailFrom();
 

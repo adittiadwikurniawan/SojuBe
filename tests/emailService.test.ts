@@ -1,8 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { sendMock, resendConstructorSpy } = vi.hoisted(() => ({
+const { sendMock, resendConstructorSpy, smtpSendMailMock, createTransportMock } = vi.hoisted(() => ({
   sendMock: vi.fn(),
   resendConstructorSpy: vi.fn(),
+  smtpSendMailMock: vi.fn(),
+  createTransportMock: vi.fn(),
+}));
+
+vi.mock('nodemailer', () => ({
+  default: {
+    createTransport: createTransportMock.mockImplementation(() => ({
+      sendMail: smtpSendMailMock,
+    })),
+  },
 }));
 
 vi.mock('resend', () => {
@@ -32,11 +42,20 @@ describe('emailService', () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
+    delete process.env.SMTP_HOST;
+    delete process.env.SMTP_PORT;
+    delete process.env.SMTP_SECURE;
+    delete process.env.SMTP_USER;
+    delete process.env.SMTP_PASS;
+    delete process.env.GMAIL_USER;
+    delete process.env.GMAIL_APP_PASSWORD;
     delete process.env.RESEND_API_KEY;
     delete process.env.EMAIL_FROM;
     delete process.env.WEB_APP_URL;
     sendMock.mockReset();
     resendConstructorSpy.mockReset();
+    smtpSendMailMock.mockReset();
+    createTransportMock.mockClear();
   });
 
   afterEach(() => {
@@ -221,6 +240,61 @@ describe('emailService', () => {
           token: 'tok-fail',
         })
       ).rejects.toThrow('Gagal mengirim email melalui Resend: Invalid API key');
+    });
+  });
+
+  describe('Gmail SMTP dispatch (SMTP_USER & SMTP_PASS configured)', () => {
+    it('dispatches email via Gmail SMTP with normalized App Password and default Gmail sender', async () => {
+      process.env.SMTP_USER = 'soju.demo@gmail.com';
+      process.env.SMTP_PASS = 'abcd efgh ijkl mnop';
+      process.env.WEB_APP_URL = 'https://soju.test';
+      smtpSendMailMock.mockResolvedValue({ messageId: '<smtp-001@gmail.com>' });
+
+      const result = await sendPasswordResetEmail({
+        to: 'pelanggan@soju.test',
+        nama: 'Adit',
+        token: 'smtp-reset-token',
+        targetType: 'CUSTOMER',
+      });
+
+      expect(createTransportMock).toHaveBeenCalledWith({
+        host: 'smtp.gmail.com',
+        port: 465,
+        secure: true,
+        auth: {
+          user: 'soju.demo@gmail.com',
+          pass: 'abcdefghijklmnop',
+        },
+      });
+      expect(smtpSendMailMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          from: 'SOJU FnB <soju.demo@gmail.com>',
+          to: 'pelanggan@soju.test',
+          subject: 'Reset Password Akun Pelanggan SOJU FnB',
+        })
+      );
+      expect(resendConstructorSpy).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        delivered: true,
+        mode: 'smtp',
+        messageId: '<smtp-001@gmail.com>',
+        to: 'pelanggan@soju.test',
+        subject: 'Reset Password Akun Pelanggan SOJU FnB',
+        actionUrl: 'https://soju.test/customer/reset-password?token=smtp-reset-token',
+      });
+    });
+
+    it('throws descriptive error when SMTP sendMail fails', async () => {
+      process.env.GMAIL_USER = 'soju.demo@gmail.com';
+      process.env.GMAIL_APP_PASSWORD = 'wrongpassword';
+      smtpSendMailMock.mockRejectedValue(new Error('Invalid login'));
+
+      await expect(
+        sendVerificationEmail({
+          to: 'user@soju.test',
+          token: 'tok-smtp-fail',
+        })
+      ).rejects.toThrow('Gagal mengirim email melalui SMTP: Invalid login');
     });
   });
 });
