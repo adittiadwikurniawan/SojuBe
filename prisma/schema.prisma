@@ -1,0 +1,437 @@
+// ============================================================
+// SCHEMA — Buku Dapur (v3: Cleanup tabel tidak dipakai webf UI)
+// Revisi 08 Okt 2026: Hapus tabel data_pelanggan, data_pemasok,
+// hutang, jenis_akun — tidak ada UI di webf yang menggunakannya.
+// Hapus field order/hutang/pemasok/pelanggan dari Transaksi.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum ArahTransaksi {
+  PEMASUKAN
+  PENGELUARAN
+}
+
+enum TipeDataKolom {
+  TEKS
+  ANGKA
+  TANGGAL
+  DROPDOWN
+}
+
+enum SumberInput {
+  MANUAL
+  AI
+}
+
+enum AksiLog {
+  TAMBAH
+  UBAH
+  HAPUS
+}
+
+enum PeranPengguna {
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum StatusPesananPelanggan {
+  MENUNGGU_KONFIRMASI
+  DIPROSES
+  SELESAI
+  DIBATALKAN
+}
+
+enum SegmenKampanyePelanggan {
+  SEMUA_BERIZIN
+  BELUM_PERNAH_MEMESAN
+  TIDAK_MEMESAN_LAGI
+}
+
+enum StatusKampanyePelanggan {
+  DRAF
+}
+
+enum AiMessageRole {
+  USER
+  ASSISTANT
+}
+
+enum AiRoutePath {
+  SQL_TOOL
+  VECTOR_RAG
+  ACTION_DRAFT
+  REFUSAL
+}
+
+enum AiDocumentSourceType {
+  SOP
+  FAQ
+  PRODUK
+  CMS
+  MANUAL
+}
+
+enum AiRoleScope {
+  ALL_ADMIN
+  SUPER_ADMIN
+}
+
+model Pengguna {
+  id           Int      @id @default(autoincrement())
+  nama         String   @db.VarChar(100)
+  email        String   @unique @db.VarChar(150)
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  peran        PeranPengguna @default(ADMIN)
+  dibuatPada   DateTime @default(now()) @map("dibuat_pada") @db.DateTime(0)
+
+  transaksi       Transaksi[]
+  logAudit        LogAudit[]
+  jenisTransaksi  JenisTransaksi[]
+  kolomCustom     KolomCustom[]
+  tabelBebas      TabelBebas[]
+  cmsContent      CmsContent[]
+  kampanyePelanggan KampanyePelanggan[]
+  aiConversations AiConversation[]
+  aiKnowledgeDocuments AiKnowledgeDocument[]
+
+  @@map("pengguna")
+}
+
+/// Master Transaksi — daftar jenis transaksi, full CRUD oleh user.
+model JenisTransaksi {
+  id              Int            @id @default(autoincrement())
+  kode            String         @unique @db.VarChar(10)
+  namaTransaksi   String         @map("nama_transaksi") @db.VarChar(150)
+  arah            ArahTransaksi
+  jenisAkun       String?        @map("jenis_akun") @db.VarChar(150)
+  unitBisnis      String?        @map("unit_bisnis") @db.VarChar(50)
+  isBawaan        Boolean        @default(false) @map("is_bawaan")
+  aktif           Boolean        @default(true)
+  dibuatOleh      Int?           @map("dibuat_oleh")
+  dibuatPada      DateTime       @default(now()) @map("dibuat_pada") @db.DateTime(0)
+
+  pengguna        Pengguna?      @relation(fields: [dibuatOleh], references: [id])
+  kolomCustom     KolomCustom[]
+  transaksi       Transaksi[]
+
+  @@map("jenis_transaksi")
+}
+
+/// Kolom tambahan bebas per JenisTransaksi
+model KolomCustom {
+  id               Int            @id @default(autoincrement())
+  jenisTransaksiId Int            @map("jenis_transaksi_id")
+  namaKolom        String         @map("nama_kolom") @db.VarChar(100)
+  tipeData         TipeDataKolom  @map("tipe_data")
+  opsiDropdown     Json?          @map("opsi_dropdown")
+  urutan           Int            @default(0)
+  aktif            Boolean        @default(true)
+  dibuatOleh       Int?           @map("dibuat_oleh")
+  dibuatPada       DateTime       @default(now()) @map("dibuat_pada") @db.DateTime(0)
+
+  jenisTransaksi   JenisTransaksi @relation(fields: [jenisTransaksiId], references: [id])
+  pengguna         Pengguna?      @relation(fields: [dibuatOleh], references: [id])
+
+  @@map("kolom_custom")
+  @@index([jenisTransaksiId])
+}
+
+model Produk {
+  id            Int      @id @default(autoincrement())
+  kode          String   @unique @db.VarChar(20)
+  namaBarang    String   @map("nama_barang") @db.VarChar(100)
+  /// Daftar varian dipisah koma, contoh: "Pakai sosis, Pakai keju". Kosong = tanpa varian.
+  varian        String?  @db.Text
+  satuan        String   @default("pcs") @db.VarChar(20)
+  hargaDefault  Decimal  @default(0) @map("harga_default") @db.Decimal(15, 2)
+  gambar        String?  @db.Text
+  gambarNama    String?  @map("gambar_nama") @db.VarChar(255)
+  gambarData    Bytes?   @map("gambar_data") @db.LongBlob
+  gambarMime    String?  @map("gambar_mime") @db.VarChar(100)
+  deskripsi      String?  @db.Text
+  aktif         Boolean  @default(true)
+  dibuatPada    DateTime @default(now()) @map("dibuat_pada") @db.DateTime(0)
+
+  itemPesananPelanggan ItemPesananPelanggan[]
+
+  @@map("produk")
+}
+
+/// Akun customer storefront, dipisahkan dari pengguna admin.
+model Pelanggan {
+  id           Int      @id @default(autoincrement())
+  nama         String   @db.VarChar(100)
+  email        String   @unique @db.VarChar(150)
+  noTelepon    String   @map("no_telepon") @db.VarChar(30)
+  alamat       String   @db.Text
+  passwordHash String   @map("password_hash") @db.VarChar(255)
+  keranjang    Json?
+  aktif        Boolean  @default(true)
+  dibuatPada   DateTime @default(now()) @map("dibuat_pada") @db.DateTime(0)
+  diubahPada   DateTime @updatedAt @map("diubah_pada") @db.DateTime(0)
+  terakhirMasukPada DateTime? @map("terakhir_masuk_pada") @db.DateTime(0)
+  promosiDiizinkan Boolean @default(false) @map("promosi_diizinkan")
+  promosiDisetujuiPada DateTime? @map("promosi_disetujui_pada") @db.DateTime(0)
+  promosiBerhentiPada DateTime? @map("promosi_berhenti_pada") @db.DateTime(0)
+
+  pesanan PesananPelanggan[]
+
+  @@map("pelanggan")
+  @@index([aktif, terakhirMasukPada])
+  @@index([promosiDiizinkan])
+}
+
+/// Draft kampanye CRM; pengiriman baru diaktifkan setelah provider email dipilih.
+model KampanyePelanggan {
+  id                  Int                       @id @default(autoincrement())
+  judul               String                    @db.VarChar(150)
+  subjek              String                    @db.VarChar(200)
+  isi                 String                    @db.Text
+  segmen              SegmenKampanyePelanggan
+  hariTidakMemesan    Int?                      @map("hari_tidak_memesan")
+  status              StatusKampanyePelanggan   @default(DRAF)
+  dibuatOleh          Int                       @map("dibuat_oleh")
+  dibuatPada          DateTime                  @default(now()) @map("dibuat_pada") @db.DateTime(0)
+  diubahPada          DateTime                  @updatedAt @map("diubah_pada") @db.DateTime(0)
+
+  pengguna            Pengguna                  @relation(fields: [dibuatOleh], references: [id])
+
+  @@map("kampanye_pelanggan")
+  @@index([dibuatPada])
+}
+
+/// Pesanan storefront tanpa pembayaran online pada tahap awal.
+model PesananPelanggan {
+  id              Int                    @id @default(autoincrement())
+  kode            String                 @unique @db.VarChar(30)
+  pelangganId     Int                    @map("pelanggan_id")
+  namaPenerima    String                 @map("nama_penerima") @db.VarChar(100)
+  emailPenerima   String                 @map("email_penerima") @db.VarChar(150)
+  noTelepon       String                 @map("no_telepon") @db.VarChar(30)
+  alamat          String                 @db.Text
+  total           Decimal                @db.Decimal(15, 2)
+  status          StatusPesananPelanggan @default(MENUNGGU_KONFIRMASI)
+  dibuatPada      DateTime               @default(now()) @map("dibuat_pada") @db.DateTime(0)
+  diubahPada      DateTime               @updatedAt @map("diubah_pada") @db.DateTime(0)
+
+  pelanggan Pelanggan             @relation(fields: [pelangganId], references: [id], onDelete: Restrict)
+  item      ItemPesananPelanggan[]
+
+  @@index([pelangganId, dibuatPada])
+  @@index([status, dibuatPada])
+  @@map("pesanan_pelanggan")
+}
+
+/// Snapshot item pesanan agar riwayat harga/nama tetap utuh.
+model ItemPesananPelanggan {
+  id          Int      @id @default(autoincrement())
+  pesananId   Int      @map("pesanan_id")
+  produkId    Int?     @map("produk_id")
+  namaProduk  String   @map("nama_produk") @db.VarChar(100)
+  varian      String?  @db.VarChar(100)
+  satuan      String?  @db.VarChar(20)
+  harga       Decimal  @db.Decimal(15, 2)
+  jumlah      Int
+  catatan     String?  @db.VarChar(255)
+  subtotal    Decimal  @db.Decimal(15, 2)
+
+  pesanan PesananPelanggan @relation(fields: [pesananId], references: [id], onDelete: Cascade)
+  produk  Produk?          @relation(fields: [produkId], references: [id], onDelete: SetNull)
+
+  @@index([pesananId])
+  @@index([produkId])
+  @@map("item_pesanan_pelanggan")
+}
+
+/// Entri Transaksi — TABEL INTI. Satu baris = satu entri di bawah satu
+/// JenisTransaksi. Kolom wajib: tanggal, detail, jenisKas, nominal.
+model Transaksi {
+  id               Int             @id @default(autoincrement())
+  kode             String          @unique @db.VarChar(30)
+  tanggal          DateTime        @db.Date
+  unitBisnis       String?         @map("unit_bisnis") @db.VarChar(50)
+
+  jenisTransaksiId Int             @map("jenis_transaksi_id")
+  namaTransaksi    String          @map("nama_transaksi") @db.VarChar(150)
+
+  detail           String?         @db.VarChar(255)
+  jenisKas         String?         @map("jenis_kas") @db.VarChar(50)
+  nominal          Decimal         @db.Decimal(15, 2)
+
+  debit            String?         @db.VarChar(150)
+  kredit           String?         @db.VarChar(150)
+
+  customData       Json?           @map("custom_data")
+
+  sumberInput      SumberInput     @default(MANUAL) @map("sumber_input")
+  dibuatOleh       Int             @map("dibuat_oleh")
+  dibuatPada       DateTime        @default(now()) @map("dibuat_pada") @db.DateTime(0)
+  diubahPada       DateTime        @updatedAt @map("diubah_pada") @db.DateTime(0)
+
+  jenisTransaksi   JenisTransaksi  @relation(fields: [jenisTransaksiId], references: [id])
+  pengguna         Pengguna        @relation(fields: [dibuatOleh], references: [id])
+
+  @@map("transaksi")
+  @@index([tanggal])
+  @@index([jenisTransaksiId])
+  @@index([unitBisnis])
+}
+
+/// Fitur "Buat Tabel Bebas" — TERPISAH TOTAL dari Master Transaksi.
+model TabelBebas {
+  id           Int                @id @default(autoincrement())
+  namaTabel    String             @unique @map("nama_tabel") @db.VarChar(100)
+  deskripsi    String?            @db.VarChar(255)
+  dibuatOleh   Int                @map("dibuat_oleh")
+  dibuatPada   DateTime           @default(now()) @map("dibuat_pada") @db.DateTime(0)
+
+  kolom        KolomTabelBebas[]
+  baris        BarisTabelBebas[]
+  pengguna     Pengguna           @relation(fields: [dibuatOleh], references: [id])
+
+  @@map("tabel_bebas")
+}
+
+model KolomTabelBebas {
+  id            Int            @id @default(autoincrement())
+  tabelBebasId  Int            @map("tabel_bebas_id")
+  namaKolom     String         @map("nama_kolom") @db.VarChar(100)
+  tipeData      TipeDataKolom  @map("tipe_data")
+  opsiDropdown  Json?          @map("opsi_dropdown")
+  urutan        Int            @default(0)
+
+  tabelBebas    TabelBebas @relation(fields: [tabelBebasId], references: [id], onDelete: Cascade)
+
+  @@map("kolom_tabel_bebas")
+  @@index([tabelBebasId])
+}
+
+model BarisTabelBebas {
+  id            Int        @id @default(autoincrement())
+  tabelBebasId  Int        @map("tabel_bebas_id")
+  data          Json
+  dibuatPada    DateTime   @default(now()) @map("dibuat_pada") @db.DateTime(0)
+  diubahPada    DateTime   @updatedAt @map("diubah_pada") @db.DateTime(0)
+
+  tabelBebas    TabelBebas @relation(fields: [tabelBebasId], references: [id], onDelete: Cascade)
+
+  @@map("baris_tabel_bebas")
+  @@index([tabelBebasId])
+}
+
+/// Riwayat / audit log
+model LogAudit {
+  id             Int      @id @default(autoincrement())
+  penggunaId     Int      @map("pengguna_id")
+  tabelTarget    String   @map("tabel_target") @db.VarChar(50)
+  targetId       Int?     @map("target_id")
+  aksi           AksiLog
+  sumber         SumberInput
+  command        String?  @db.VarChar(50)
+  labelRecord    String   @map("label_record") @db.VarChar(150)
+  detail         String?  @db.VarChar(255)
+  dataSebelum    String?  @map("data_sebelum") @db.Text
+  dataSesudah    String?  @map("data_sesudah") @db.Text
+  dibuatPada     DateTime @default(now()) @map("dibuat_pada") @db.DateTime(0)
+
+  pengguna       Pengguna @relation(fields: [penggunaId], references: [id])
+
+  @@map("log_audit")
+  @@index([tabelTarget])
+  @@index([sumber])
+  @@index([dibuatPada])
+}
+
+/// CMS Content - konten yang bisa dikustomisasi untuk customer page
+model CmsContent {
+  id           Int      @id @default(autoincrement())
+  key          String   @unique @db.VarChar(100)
+  judul        String   @db.VarChar(255)
+  subJudul     String?  @map("sub_judul") @db.Text
+  konten       String?  @db.Text
+  aktif        Boolean  @default(true)
+  dibuatOleh   Int      @map("dibuat_oleh")
+  dibuatPada   DateTime @default(now()) @map("dibuat_pada") @db.DateTime(0)
+  diubahPada   DateTime @updatedAt @map("diubah_pada") @db.DateTime(0)
+
+  pengguna     Pengguna @relation(fields: [dibuatOleh], references: [id])
+
+  @@map("cms_content")
+}
+
+model AiConversation {
+  id         Int         @id @default(autoincrement())
+  penggunaId Int         @map("pengguna_id")
+  title      String      @db.VarChar(180)
+  createdAt  DateTime    @default(now()) @map("created_at") @db.DateTime(0)
+  updatedAt  DateTime    @updatedAt @map("updated_at") @db.DateTime(0)
+
+  pengguna Pengguna    @relation(fields: [penggunaId], references: [id], onDelete: Cascade)
+  messages AiMessage[]
+
+  @@index([penggunaId, updatedAt])
+  @@map("ai_conversations")
+}
+
+model AiMessage {
+  id             Int          @id @default(autoincrement())
+  conversationId Int          @map("conversation_id")
+  role           AiMessageRole
+  content        String       @db.LongText
+  routePath      AiRoutePath? @map("route_path")
+  citations      Json
+  actions        Json
+  createdAt      DateTime     @default(now()) @map("created_at") @db.DateTime(0)
+
+  conversation AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+model AiKnowledgeDocument {
+  id          Int                  @id @default(autoincrement())
+  title       String               @db.VarChar(255)
+  sourceType  AiDocumentSourceType @map("source_type")
+  sourceRef   String?              @map("source_ref") @db.VarChar(255)
+  roleScope   AiRoleScope          @default(ALL_ADMIN) @map("role_scope")
+  content     String               @db.LongText
+  aktif       Boolean              @default(true)
+  dibuatOleh  Int                  @map("dibuat_oleh")
+  dibuatPada  DateTime             @default(now()) @map("dibuat_pada") @db.DateTime(0)
+  diubahPada  DateTime             @updatedAt @map("diubah_pada") @db.DateTime(0)
+
+  pengguna Pengguna           @relation(fields: [dibuatOleh], references: [id], onDelete: Restrict)
+  chunks   AiKnowledgeChunk[]
+
+  @@index([aktif, roleScope])
+  @@index([dibuatOleh, dibuatPada])
+  @@map("ai_knowledge_documents")
+}
+
+model AiKnowledgeChunk {
+  id         Int                  @id @default(autoincrement())
+  documentId Int?                 @map("document_id")
+  sourceType AiDocumentSourceType @map("source_type")
+  sourceRef  String?              @map("source_ref") @db.VarChar(255)
+  title      String               @db.VarChar(255)
+  roleScope  AiRoleScope          @default(ALL_ADMIN) @map("role_scope")
+  chunkIndex Int                  @map("chunk_index")
+  content    String               @db.LongText
+  createdAt  DateTime             @default(now()) @map("created_at") @db.DateTime(0)
+
+  document AiKnowledgeDocument? @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, chunkIndex])
+  @@index([sourceType, roleScope])
+  @@map("ai_knowledge_chunks")
+}
+
